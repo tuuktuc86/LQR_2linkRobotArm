@@ -24,10 +24,13 @@ center_x, center_y = 1.0, 1.0
 radius = 0.5
 
 # 원 위의 점 20개 생성 (각도를 균등하게 배분)
-angles = np.linspace(0, 2 * np.pi, 30, endpoint=False)  # 0 ~ 360도 범위에서 20개 점 생성
+# 🔹 반시계 방향 회전을 위해 시작 각도를 π/2 (90도)로 설정
+# 🔹 180도(π)에서 시작하여 반시계 방향으로 진행 (360도(2π) 이후까지 진행)
+angles = np.linspace(np.pi, 3 * np.pi, 30, endpoint=False)
 
-# (x, y) 좌표 계산
+# 🔹 (x, y) 좌표 계산
 targets = [(center_x + radius * np.cos(theta), center_y + radius * np.sin(theta)) for theta in angles]
+
 distance_threshold = 0.02  # 목표 전환 거리
 error_integral = np.array([0.0, 0.0])
 
@@ -62,7 +65,7 @@ def lqr_control(q, q_ref):
     K = np.linalg.inv(R) @ B.T @ P
 
     # 추가 P 제어기
-    K_p = np.array([[1500, 0], [0, 1500]])
+    K_p = np.array([[10, 0], [0, 10]])
 
     # 적분 항 (Integral Control)
     K_I = np.array([[1, 0], [0, 1]])  # 적분 이득 추가
@@ -70,14 +73,14 @@ def lqr_control(q, q_ref):
     # ✅ **적분 항 제한 (Anti-Windup)**
     error_integral = np.clip(error_integral, -0.5, 0.5)  
 
-    # ✅ **목표 근처에서는 적분 항 감소**
-    if np.linalg.norm(q_ref - q) < 0.02:
-        error_integral *= 0.9 
-    u = -K @ (q - q_ref) - K_p @ (q - q_ref) - K_I @ error_integral
-
-    # 최소 토크 하한 설정
-    u_min = 0.05
-    u = np.where(np.abs(u) < u_min, np.sign(u) * u_min, u)
+    # # ✅ **목표 근처에서는 적분 항 감소**
+    # if np.linalg.norm(q_ref - q) < 0.02:
+    #     error_integral *= 0.9 
+    #u = -K @ (q - q_ref) - K_p @ (q - q_ref) - K_I @ error_integral
+    u = -K @ (q - q_ref) - K_p @ (q - q_ref) 
+    # # 최소 토크 하한 설정
+    # u_min = 0.05
+    # u = np.where(np.abs(u) < u_min, np.sign(u) * u_min, u)
     
     return u
 
@@ -132,8 +135,8 @@ dt = params['dt']
 iter = int(params['sim_time'] / dt)
 
 # 초기 상태
-q = np.array([np.pi / 16, np.pi / 16])
-dq = np.array([10.0, 10.0])
+q = np.array([np.pi / 2, 0])
+dq = np.array([0.0, 0.0])
 target_index = 0
 q_ref = inverse_kinematics(*targets[target_index])
 data_records = []
@@ -146,7 +149,12 @@ for k in range(iter):
     q_ddot2_max = 2000
     # ddq[0] = np.clip(ddq[0], -30, 30)
     # ddq[1] = np.clip(ddq[1], -10, 10)
-    q += dt * dt * ddq  
+    #ddq = np.clip(ddq, -10.0, 10.0)  # 가속도 제한
+
+    dq += dt * ddq
+    #dq *= 0.98  # 감쇠 적용 (속도를 서서히 줄임)
+    #dq = np.clip(dq, -5.0, 5.0)  # 속도 제한
+    q += dt * dq  
 
     q_rec.append(q.copy())
     
@@ -162,6 +170,7 @@ for k in range(iter):
     # 목표 변경 체크
     distance = np.linalg.norm([x2 - targets[target_index][0], y2 - targets[target_index][1]])
     if distance < distance_threshold and target_index < len(targets) - 1:
+        error_integral *= 0.5
         target_index += 1
         q_ref = inverse_kinematics(*targets[target_index])
 
